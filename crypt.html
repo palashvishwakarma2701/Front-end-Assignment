@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Binance Market Data</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        .controls {
+            margin-bottom: 20px;
+        }
+        select {
+            margin: 0 10px;
+        }
+        #chartContainer {
+            width: 80%;
+            height: 400px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Binance Market Data</h1>
+    <div class="controls">
+        <select id="coinSelect"></select>
+        <select id="intervalSelect">
+            <option value="1m">1 Minute</option>
+            <option value="3m">3 Minutes</option>
+            <option value="5m">5 Minutes</option>
+        </select>
+    </div>
+    <div id="chartContainer">
+        <canvas id="chart"></canvas>
+    </div>
+
+    <script>
+        const COINS = ['BNBBTC', 'ETHBTC', 'BTCUSDT'];
+        const INTERVALS = ['1m', '3m', '5m'];
+        let selectedCoin = COINS[0];
+        let selectedInterval = INTERVALS[0];
+        let chartInstance = null;
+        let ws = null;
+
+        function initializeSelects() {
+            const coinSelect = document.getElementById('coinSelect');
+            const intervalSelect = document.getElementById('intervalSelect');
+
+            COINS.forEach(coin => {
+                const option = document.createElement('option');
+                option.value = coin;
+                option.textContent = coin;
+                coinSelect.appendChild(option);
+            });
+
+            coinSelect.addEventListener('change', (e) => handleCoinChange(e.target.value));
+            intervalSelect.addEventListener('change', (e) => handleIntervalChange(e.target.value));
+        }
+
+        function connectWebSocket() {
+            if (ws) {
+                ws.close();
+            }
+
+            ws = new WebSocket(`wss://stream.binance.com:9443/ws/${selectedCoin.toLowerCase()}@kline_${selectedInterval}`);
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                updateChartData(data.k);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket connection closed. Reconnecting...');
+                setTimeout(connectWebSocket, 5000); // Retry connection after 5 seconds
+            };
+        }
+
+        function updateChartData(klineData) {
+            const newData = {
+                x: klineData.t,
+                o: parseFloat(klineData.o),
+                h: parseFloat(klineData.h),
+                l: parseFloat(klineData.l),
+                c: parseFloat(klineData.c)
+            };
+
+            if (chartInstance) {
+                chartInstance.data.datasets[0].data.push(newData);
+                // Keep only the last 100 data points
+                if (chartInstance.data.datasets[0].data.length > 100) {
+                    chartInstance.data.datasets[0].data.shift();
+                }
+                chartInstance.update('none');
+            }
+
+            // Store updated data in localStorage
+            const storedData = JSON.parse(localStorage.getItem(`${selectedCoin}_${selectedInterval}`)) || [];
+            storedData.push(newData);
+            // Keep only the last 100 data points in localStorage
+            if (storedData.length > 100) {
+                storedData.shift();
+            }
+            localStorage.setItem(`${selectedCoin}_${selectedInterval}`, JSON.stringify(storedData));
+        }
+
+        function handleCoinChange(coin) {
+            selectedCoin = coin;
+            loadStoredData();
+            connectWebSocket();
+        }
+
+        function handleIntervalChange(interval) {
+            selectedInterval = interval;
+            loadStoredData();
+            connectWebSocket();
+        }
+
+        function loadStoredData() {
+            const storedData = JSON.parse(localStorage.getItem(`${selectedCoin}_${selectedInterval}`)) || [];
+            if (chartInstance) {
+                chartInstance.data.datasets[0].data = storedData;
+                chartInstance.update();
+            } else {
+                createChart(storedData);
+            }
+        }
+
+        function createChart(data) {
+            const ctx = document.getElementById('chart').getContext('2d');
+            
+            chartInstance = new Chart(ctx, {
+                type: 'candlestick',
+                data: {
+                    datasets: [{
+                        label: `${selectedCoin} Price`,
+                        data: data
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'minute',
+                                stepSize: parseInt(selectedInterval),
+                                displayFormats: {
+                                    minute: 'HH:mm'
+                                }
+                            },
+                            ticks: {
+                                maxRotation: 0,
+                                autoSkip: true,
+                                maxTicksLimit: 10
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Price'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function initialize() {
+            initializeSelects();
+            loadStoredData();
+            connectWebSocket();
+        }
+
+        document.addEventListener('DOMContentLoaded', initialize);
+    </script>
+</body>
+</html>
